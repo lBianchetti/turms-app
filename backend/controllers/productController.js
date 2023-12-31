@@ -14,9 +14,29 @@ const createProduct = asyncHandler(async (req, res) => {
     const { name, sku, category, quantity, price, description } = req.body
 
     //validation
-    if (!name || !category || !quantity || !price || !description) {
+    if (!name) {
         res.status(400)
-        throw new Error("fill all fields")
+        throw new Error("fill name")
+    }
+
+    if (!category) {
+        res.status(400)
+        throw new Error("fill category")
+    }
+
+    if (!quantity) {
+        res.status(400)
+        throw new Error("fill quantity")
+    }
+
+    if (!price) {
+        res.status(400)
+        throw new Error("fill price")
+    }
+
+    if (!description) {
+        res.status(400)
+        throw new Error("fill description")
     }
 
     //create product 
