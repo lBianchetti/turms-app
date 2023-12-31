@@ -183,6 +183,7 @@ const updateUser = asyncHandler( async (req, res) => {
     }
 })
 
+//update password
 const updatePassword = asyncHandler( async (req, res) => {
     const user = await User.findById(req.user._id)
     const {oldPassword, password} = req.body
@@ -213,6 +214,7 @@ const updatePassword = asyncHandler( async (req, res) => {
     }
 })
 
+//forgot password
 const forgotPassword = asyncHandler( async (req, res) => {
     const {email} = req.body
     const user = await User.findOne({email})

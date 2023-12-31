@@ -5,8 +5,11 @@ const bodyParser = require("body-parser")
 const cors = require("cors")
 const errorHandler = require("./middleware/errorMiddleware.js")
 const cookieParser = require("cookie-parser")
+const path = require("path")
 
 const userRoute = require("./routes/userRoute.js")
+const productRoute = require("./routes/productRoute.js")
+const contactRoute = require("./routes/contactRoute.js")
 
 const app = express()
 
@@ -20,11 +23,16 @@ app.use(bodyParser.json())
 
 //Routes Middleware
 app.use("/api/users", userRoute)
+app.use("/api/products", productRoute)
+app.use("/api/contact", contactRoute)
+
+app.use("/uploads", express.static(path.join(__dirname, "uploads")))
 
 //Routes
 app.get("/", (req, res) => {
     res.send("home page")
 })
+
 
 //Error Middleware
 app.use(errorHandler)
