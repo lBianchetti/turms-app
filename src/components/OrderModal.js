@@ -111,11 +111,46 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
             const deliveryDate = new Date(pickupDate);
             deliveryDate.setDate(deliveryDate.getDate() + (operationalFlows[flow].deliveryDays || 0));
 
+            // Auto-assign tasks to routes based on operational flow
+            const getTaskAssignment = (taskType, flow) => {
+                if (taskType === 'coleta') {
+                    // Collection tasks
+                    if (flow === 'lafa_to_bh' || flow === 'congonhas_to_bh') {
+                        return 'coletas_fora'; // Morning block - collections from outside BH
+                    }
+                    return null; // BH collections go to afternoon unassigned
+                } else {
+                    // Delivery tasks
+                    if (flow === 'bh_to_lafa') {
+                        return 'entregas_lafa'; // Morning block - deliveries to Lafaiete
+                    } else if (flow === 'bh_to_congonhas') {
+                        return 'entregas_noturnas'; // Night block - deliveries to Congonhas
+                    }
+                    return null; // BH deliveries go to afternoon unassigned
+                }
+            };
+
             const orderData = {
                 flow, clientName, cargoDesc, weight: parseFloat(weight), freightValue: parseFloat(freightValue),
                 paymentStatus: orderToEdit ? orderToEdit.paymentStatus : 'Pendente', tags, size,
-                pickupTask: { type: 'coleta', address: origin.label, city: operationalFlows[flow].pickup, geo: originCoords, scheduledDate: Timestamp.fromDate(pickupDate), status: 'pendente' },
-                deliveryTask: { type: 'entrega', address: destination.label, city: operationalFlows[flow].delivery, geo: destCoords, scheduledDate: Timestamp.fromDate(deliveryDate), status: 'pendente' },
+                pickupTask: {
+                    type: 'coleta',
+                    address: origin.label,
+                    city: operationalFlows[flow].pickup,
+                    geo: originCoords,
+                    scheduledDate: Timestamp.fromDate(pickupDate),
+                    status: 'pendente',
+                    assignedTo: getTaskAssignment('coleta', flow)
+                },
+                deliveryTask: {
+                    type: 'entrega',
+                    address: destination.label,
+                    city: operationalFlows[flow].delivery,
+                    geo: destCoords,
+                    scheduledDate: Timestamp.fromDate(deliveryDate),
+                    status: 'pendente',
+                    assignedTo: getTaskAssignment('entrega', flow)
+                },
                 origin: origin.label, destination: destination.label,
                 originData: { address: origin.label, place_id: origin.value.place_id, ...originCoords },
                 destinationData: { address: destination.label, place_id: destination.value.place_id, ...destCoords },
