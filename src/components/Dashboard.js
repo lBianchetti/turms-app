@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { Plus, Sparkles, Box, Edit, Trash2, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Plus, Sparkles, Box, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { auth, db } from '../config/firebase';
 import { callGeminiAPI } from '../services/geminiAPI';
 import OrderModal from './OrderModal';
@@ -9,7 +9,6 @@ import FinancialSummary from '../components/FinancialSummary';
 
 const appId = 'turms-local-dev';
 
-// O componente agora recebe 'isLoaded' do App.js
 const Dashboard = ({ user, navigateTo, isLoaded }) => {
     const [allOrders, setAllOrders] = useState([]);
     const [filteredOrders, setFilteredOrders] = useState([]);
@@ -43,9 +42,10 @@ const Dashboard = ({ user, navigateTo, isLoaded }) => {
         endOfDay.setHours(23, 59, 59, 999);
 
         const filtered = allOrders.filter(order => {
-            const orderDate = order.createdAt?.toDate();
-            if (!orderDate) return false;
-            return orderDate >= startOfDay && orderDate <= endOfDay;
+            const dateToFilter = order.orderDate?.toDate() || order.createdAt?.toDate();
+            if (!dateToFilter) return false;
+            
+            return dateToFilter >= startOfDay && dateToFilter <= endOfDay;
         });
         
         filtered.sort((a, b) => (b.createdAt?.toDate() || 0) - (a.createdAt?.toDate() || 0));

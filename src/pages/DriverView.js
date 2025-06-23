@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { ArrowUp, ArrowDown, MapPin, Check, Phone, ArrowLeft, Loader } from 'lucide-react';
 
@@ -19,30 +19,42 @@ const DriverView = ({ driverId, date, navigateTo, user }) => {
         // Busca os dados do motorista para exibir o nome
         const driverDocRef = doc(db, `artifacts/${appId}/users/${user.uid}/drivers`, driverId);
         const driverUnsubscribe = onSnapshot(driverDocRef, (doc) => {
-            if(doc.exists()) {
-                setDriver(doc.data());
-            }
+            if(doc.exists()) setDriver(doc.data());
         });
 
-        // Constrói a consulta para os pedidos do dia
-        const selectedDate = new Date(date);
-        selectedDate.setMinutes(selectedDate.getMinutes() + selectedDate.getTimezoneOffset());
-        
-        const startOfDay = Timestamp.fromDate(new Date(selectedDate.setHours(0, 0, 0, 0)));
-        const endOfDay = Timestamp.fromDate(new Date(selectedDate.setHours(23, 59, 59, 999)));
-
+        // CORREÇÃO: A consulta agora busca todos os pedidos e o filtro é feito no lado do cliente.
+        // Isto é necessário para encontrar tarefas agendadas em datas diferentes da data de criação do pedido.
         const ordersCollectionPath = `artifacts/${appId}/users/${user.uid}/orders`;
-        const q = query(
-            collection(db, ordersCollectionPath), 
-            where("driverId", "==", driverId),
-            where("createdAt", ">=", startOfDay),
-            where("createdAt", "<=", endOfDay)
-        );
+        const q = query(collection(db, ordersCollectionPath));
 
         const ordersUnsubscribe = onSnapshot(q, (snapshot) => {
-            const ordersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            ordersData.sort((a, b) => (a.routeOrder || 0) - (b.routeOrder || 0));
-            setRoute(ordersData);
+            const tasksForDriver = [];
+            const selectedDateStart = new Date(date);
+            selectedDateStart.setHours(0, 0, 0, 0);
+            
+            const selectedDateEnd = new Date(date);
+            selectedDateEnd.setHours(23, 59, 59, 999);
+
+            snapshot.docs.forEach(doc => {
+                const order = { id: doc.id, ...doc.data() };
+                
+                // Verifica ambas as tarefas (coleta e entrega) de cada pedido
+                ['pickupTask', 'deliveryTask'].forEach(taskName => {
+                    const task = order[taskName];
+                    const taskDate = task?.scheduledDate?.toDate();
+                    
+                    // A tarefa aparece na rota se:
+                    // 1. Está atribuída a este motorista (task.assignedTo === driverId)
+                    // 2. A sua data agendada é a data selecionada
+                    if(task && task.assignedTo === driverId && taskDate >= selectedDateStart && taskDate <= selectedDateEnd) {
+                        tasksForDriver.push({ ...task, order, taskName });
+                    }
+                });
+            });
+            
+            // Ordena as tarefas encontradas pela ordem definida no planejamento
+            tasksForDriver.sort((a, b) => (a.orderInRoute || 0) - (b.orderInRoute || 0));
+            setRoute(tasksForDriver);
             setLoading(false);
         });
 
@@ -52,19 +64,16 @@ const DriverView = ({ driverId, date, navigateTo, user }) => {
         };
     }, [user, driverId, date]);
 
-    const handleMarkAsDone = async (orderId) => {
+    const handleMarkAsDone = async (orderId, taskType) => {
         try {
             const orderRef = doc(db, `artifacts/${appId}/users/${user.uid}/orders`, orderId);
-            // Ao marcar como feito, o pagamento fica pendente por padrão
-            await updateDoc(orderRef, { paymentStatus: 'Pendente' });
+            await updateDoc(orderRef, { [`${taskType}.status`]: 'concluída' });
         } catch (error) {
-            console.error("Erro ao atualizar o estado do pedido:", error);
+            console.error("Erro ao atualizar o estado da tarefa:", error);
         }
     };
 
-    if (loading) {
-        return <div className="min-h-screen flex items-center justify-center"><Loader className="w-12 h-12 animate-spin text-sky-600"/></div>;
-    }
+    if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader className="w-12 h-12 animate-spin text-sky-600"/></div>;
 
     return (
         <div className="min-h-screen bg-gray-100 font-sans">
@@ -88,24 +97,21 @@ const DriverView = ({ driverId, date, navigateTo, user }) => {
                         <p className="text-gray-500">Por favor, verifique com o escritório ou selecione outra data.</p>
                     </div>
                 )}
-                {route.map(order => (
-                    <div key={order.id} className={`bg-white rounded-xl shadow-md overflow-hidden ${order.paymentStatus === 'Pago' ? 'opacity-60' : ''}`}>
-                        <div className={`p-4 border-l-8 ${order.serviceType === 'coleta' ? 'border-blue-500' : 'border-red-500'}`}>
+                {route.map(task => (
+                    <div key={`${task.order.id}-${task.type}`} className={`bg-white rounded-xl shadow-md overflow-hidden ${task.status === 'concluída' ? 'opacity-60' : ''}`}>
+                        <div className={`p-4 border-l-8 ${task.type === 'coleta' ? 'border-blue-500' : 'border-red-500'}`}>
                             <div className="flex justify-between items-start">
                                 <div>
                                     <div className="flex items-center gap-2 mb-2">
-                                        {order.serviceType === 'coleta' ? 
-                                            <ArrowDown className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full p-1"/> : 
-                                            <ArrowUp className="w-6 h-6 bg-red-100 text-red-600 rounded-full p-1"/>
-                                        }
-                                        <h2 className="text-xl font-bold text-gray-800 capitalize">{order.serviceType}</h2>
+                                        {task.type === 'coleta' ? <ArrowDown className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full p-1"/> : <ArrowUp className="w-6 h-6 bg-red-100 text-red-600 rounded-full p-1"/>}
+                                        <h2 className="text-xl font-bold text-gray-800 capitalize">{task.type}</h2>
                                     </div>
-                                    <p className="font-semibold text-lg text-gray-700">{order.clientName}</p>
-                                    <p className="text-gray-600">{order.cargoDesc}</p>
+                                    <p className="font-semibold text-lg text-gray-700">{task.order.clientName}</p>
+                                    <p className="text-gray-600">{task.order.cargoDesc}</p>
                                 </div>
                                 <div className="text-right">
-                                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${order.paymentStatus === 'Pago' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                        {order.paymentStatus || 'Pendente'}
+                                    <span className={`px-3 py-1 text-sm font-semibold rounded-full ${task.status === 'concluída' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                        {task.status}
                                     </span>
                                 </div>
                             </div>
@@ -113,29 +119,14 @@ const DriverView = ({ driverId, date, navigateTo, user }) => {
                             <div className="mt-4 pt-4 border-t">
                                 <div className="flex items-center text-gray-700">
                                     <MapPin className="w-5 h-5 mr-2 text-gray-400"/>
-                                    <a 
-                                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.serviceType === 'coleta' ? order.origin : order.destination)}`}
-                                        target="_blank" 
-                                        rel="noopener noreferrer"
-                                        className="hover:underline"
-                                    >
-                                        {order.serviceType === 'coleta' ? order.origin : order.destination}
-                                    </a>
+                                    <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(task.address)}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{task.address}</a>
                                 </div>
                             </div>
 
-                            {order.paymentStatus !== 'Pago' && (
+                            {task.status !== 'concluída' && (
                                 <div className="mt-4 flex gap-2">
-                                    <button 
-                                        onClick={() => handleMarkAsDone(order.id)}
-                                        className="w-full flex-1 flex items-center justify-center gap-2 p-3 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 transition-colors"
-                                    >
-                                        <Check className="w-6 h-6"/>
-                                        <span>Concluído</span>
-                                    </button>
-                                     <a href={`tel:`} className="flex-initial p-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
-                                        <Phone className="w-6 h-6"/>
-                                    </a>
+                                    <button onClick={() => handleMarkAsDone(task.order.id, task.taskName)} className="w-full flex-1 flex items-center justify-center gap-2 p-3 bg-green-500 text-white font-bold rounded-lg hover:bg-green-600 transition-colors"><Check className="w-6 h-6"/><span>Concluído</span></button>
+                                     <a href={`tel:`} className="flex-initial p-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"><Phone className="w-6 h-6"/></a>
                                 </div>
                             )}
                         </div>

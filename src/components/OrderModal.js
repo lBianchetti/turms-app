@@ -1,13 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { collection, addDoc, onSnapshot, doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import GooglePlacesAutocomplete, { geocodeByPlaceId, getLatLng } from 'react-google-places-autocomplete';
-import { X, Plus, Calculator, Loader, Sparkles } from 'lucide-react';
+import { X, Plus, Sparkles } from 'lucide-react';
 import { db } from '../config/firebase';
 import { callGeminiAPI } from '../services/geminiAPI';
 import FreightCalculator from './FreightCalculator';
 
-const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_API_KEY;
+const Maps_API_KEY = process.env.REACT_APP_GOOGLE_API_KEY;
 const appId = 'turms-local-dev';
+
+const autocompletionRequest = {
+    bounds: [
+      { lat: -20.776062384741245, lng: -44.109975037628885 },
+      { lat: -19.72030007317641, lng: -43.81497603038532 },
+    ],
+    strictBounds: false,
+};
 
 const operationalFlows = {
     'bh_to_lafa': { label: 'BH → Lafaiete', pickup: 'BH', delivery: 'Lafaiete', deliveryDays: 1 },
@@ -18,37 +26,36 @@ const operationalFlows = {
 };
 
 const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
-    // Estados do Pedido
     const [flow, setFlow] = useState('bh_to_lafa'); 
     const [clientName, setClientName] = useState('');
     const [orderDate, setOrderDate] = useState('');
     const [origin, setOrigin] = useState(null);
     const [destination, setDestination] = useState(null);
     const [cargoDesc, setCargoDesc] = useState('');
+    const [observations, setObservations] = useState(''); // <-- Novo estado para observações
     const [tags, setTags] = useState([]);
-    
-    // Estados do Frete
     const [weight, setWeight] = useState('');
     const [size, setSize] = useState('small');
     const [freightValue, setFreightValue] = useState(0);
     const [freightSettings, setFreightSettings] = useState(null);
-    
-    // Estados Gerais
     const [clients, setClients] = useState([]);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [suggestionLoading, setSuggestionLoading] = useState(false);
+    const [isAddingClient, setIsAddingClient] = useState(false);
 
     useEffect(() => {
         if (orderToEdit) {
             setFlow(orderToEdit.flow || 'bh_to_lafa');
             setClientName(orderToEdit.clientName || '');
-            if (orderToEdit.pickupTask?.scheduledDate) {
-                setOrderDate(orderToEdit.pickupTask.scheduledDate.toDate().toISOString().split('T')[0]);
+            const dateToSet = orderToEdit.orderDate || orderToEdit.pickupTask?.scheduledDate;
+            if (dateToSet) {
+                setOrderDate(dateToSet.toDate().toISOString().split('T')[0]);
             }
             setOrigin(orderToEdit.originData ? { label: orderToEdit.origin, value: { place_id: orderToEdit.originData.place_id } } : null);
             setDestination(orderToEdit.destinationData ? { label: orderToEdit.destination, value: { place_id: orderToEdit.destinationData.place_id } } : null);
             setCargoDesc(orderToEdit.cargoDesc || '');
+            setObservations(orderToEdit.observations || ''); // <-- Carrega observações existentes
             setWeight(orderToEdit.weight || '');
             setFreightValue(orderToEdit.freightValue?.toFixed(2) || 0);
             setTags(orderToEdit.tags || []);
@@ -90,6 +97,24 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
         }
     };
 
+    const handleAddClient = async () => {
+        if (!clientName || isAddingClient) return;
+        setIsAddingClient(true);
+        try {
+            const clientsCollectionPath = `artifacts/${appId}/users/${user.uid}/clients`;
+            await addDoc(collection(db, clientsCollectionPath), { name: clientName, contact: '' });
+        } catch (error) {
+            console.error("Erro ao adicionar cliente:", error);
+            setError("Não foi possível adicionar o novo cliente.");
+            setIsAddingClient(false);
+        }
+    };
+
+    const clientExists = useMemo(() => 
+        clientName && clients.some(c => c.name.toLowerCase() === clientName.toLowerCase()),
+    [clientName, clients]);
+
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!clientName || !origin || !destination || !orderDate || freightValue <= 0) {
@@ -105,51 +130,40 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
             const [destGeocode] = await geocodeByPlaceId(destination.value.place_id);
             const destCoords = await getLatLng(destGeocode);
             
-            const pickupDate = new Date(orderDate);
-            pickupDate.setMinutes(pickupDate.getMinutes() + pickupDate.getTimezoneOffset());
+            const mainOrderDate = new Date(orderDate);
+            mainOrderDate.setMinutes(mainOrderDate.getMinutes() + mainOrderDate.getTimezoneOffset());
             
-            const deliveryDate = new Date(pickupDate);
+            const deliveryDate = new Date(mainOrderDate);
             deliveryDate.setDate(deliveryDate.getDate() + (operationalFlows[flow].deliveryDays || 0));
 
-            // Auto-assign tasks to routes based on operational flow
             const getTaskAssignment = (taskType, flow) => {
                 if (taskType === 'coleta') {
-                    // Collection tasks
                     if (flow === 'lafa_to_bh' || flow === 'congonhas_to_bh') {
-                        return 'coletas_fora'; // Morning block - collections from outside BH
+                        return 'coletas_fora';
                     }
-                    return null; // BH collections go to afternoon unassigned
+                    return null;
                 } else {
-                    // Delivery tasks
                     if (flow === 'bh_to_lafa') {
-                        return 'entregas_lafa'; // Morning block - deliveries to Lafaiete
+                        return 'entregas_lafa';
                     } else if (flow === 'bh_to_congonhas') {
-                        return 'entregas_noturnas'; // Night block - deliveries to Congonhas
+                        return 'entregas_noturnas';
                     }
-                    return null; // BH deliveries go to afternoon unassigned
+                    return null;
                 }
             };
 
             const orderData = {
-                flow, clientName, cargoDesc, weight: parseFloat(weight), freightValue: parseFloat(freightValue),
+                flow, clientName, cargoDesc, observations, // <-- Salva observações
+                weight: parseFloat(weight), freightValue: parseFloat(freightValue),
                 paymentStatus: orderToEdit ? orderToEdit.paymentStatus : 'Pendente', tags, size,
+                orderDate: Timestamp.fromDate(mainOrderDate),
                 pickupTask: {
-                    type: 'coleta',
-                    address: origin.label,
-                    city: operationalFlows[flow].pickup,
-                    geo: originCoords,
-                    scheduledDate: Timestamp.fromDate(pickupDate),
-                    status: 'pendente',
-                    assignedTo: getTaskAssignment('coleta', flow)
+                    type: 'coleta', address: origin.label, city: operationalFlows[flow].pickup, geo: originCoords,
+                    scheduledDate: Timestamp.fromDate(mainOrderDate), status: 'pendente', assignedTo: getTaskAssignment('coleta', flow)
                 },
                 deliveryTask: {
-                    type: 'entrega',
-                    address: destination.label,
-                    city: operationalFlows[flow].delivery,
-                    geo: destCoords,
-                    scheduledDate: Timestamp.fromDate(deliveryDate),
-                    status: 'pendente',
-                    assignedTo: getTaskAssignment('entrega', flow)
+                    type: 'entrega', address: destination.label, city: operationalFlows[flow].delivery, geo: destCoords,
+                    scheduledDate: Timestamp.fromDate(deliveryDate), status: 'pendente', assignedTo: getTaskAssignment('entrega', flow)
                 },
                 origin: origin.label, destination: destination.label,
                 originData: { address: origin.label, place_id: origin.value.place_id, ...originCoords },
@@ -181,7 +195,7 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
                     <h2 className="text-2xl font-bold text-gray-800">{orderToEdit ? 'Editar Pedido' : 'Adicionar Novo Pedido'}</h2>
                     <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100"><X className="w-6 h-6 text-gray-600" /></button>
                 </div>
-                <form onSubmit={handleSubmit} className="p-8 space-y-8">
+                <form onSubmit={handleSubmit} className="p-8 space-y-6">
                      <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Fluxo Operacional</label>
                         <div className="flex flex-wrap gap-2">
@@ -193,7 +207,19 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                          <div className="md:col-span-2">
                             <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Cliente</label>
-                            <input type="text" list="clients-list" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Selecione ou digite um novo cliente" className="w-full px-4 py-2 bg-gray-50 border rounded-lg"/>
+                            <div className="flex items-center gap-2">
+                                <input type="text" list="clients-list" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Selecione ou digite um novo cliente" className="w-full px-4 py-2 bg-gray-50 border rounded-lg"/>
+                                {!clientExists && clientName.length > 2 && (
+                                    <button
+                                        type="button"
+                                        onClick={handleAddClient}
+                                        disabled={isAddingClient}
+                                        className="flex-shrink-0 px-3 py-2 text-sm font-semibold text-white bg-green-500 rounded-lg hover:bg-green-600 disabled:bg-green-300"
+                                    >
+                                        {isAddingClient ? 'Adicionando...' : 'Adicionar'}
+                                    </button>
+                                )}
+                            </div>
                             <datalist id="clients-list">{clients.map(c => (<option key={c.id} value={c.name} />))}</datalist>
                         </div>
                         <div>
@@ -204,11 +230,11 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Endereço de Coleta (em {operationalFlows[flow].pickup})</label>
-                            {isLoaded ? (<GooglePlacesAutocomplete apiKey={GOOGLE_MAPS_API_KEY} selectProps={{value: origin, onChange: setOrigin, placeholder: 'Digite...', styles: { input: (p) => ({ ...p, height: '42px' }) }}}/>) : (<div className="w-full h-[42px] bg-gray-200 rounded-lg animate-pulse"></div>)}
+                            {isLoaded ? (<GooglePlacesAutocomplete autocompletionRequest={autocompletionRequest} apiKey={Maps_API_KEY} selectProps={{value: origin, onChange: setOrigin, placeholder: 'Digite...', styles: { input: (p) => ({ ...p, height: '42px' }) }}}/>) : (<div className="w-full h-[42px] bg-gray-200 rounded-lg animate-pulse"></div>)}
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Endereço de Entrega (em {operationalFlows[flow].delivery})</label>
-                            {isLoaded ? (<GooglePlacesAutocomplete apiKey={GOOGLE_MAPS_API_KEY} selectProps={{value: destination, onChange: setDestination, placeholder: 'Digite...', styles: { input: (p) => ({ ...p, height: '42px' }) }}}/>) : (<div className="w-full h-[42px] bg-gray-200 rounded-lg animate-pulse"></div>)}
+                            {isLoaded ? (<GooglePlacesAutocomplete autocompletionRequest={autocompletionRequest} apiKey={Maps_API_KEY} selectProps={{value: destination, onChange: setDestination, placeholder: 'Digite...', styles: { input: (p) => ({ ...p, height: '42px' }) }}}/>) : (<div className="w-full h-[42px] bg-gray-200 rounded-lg animate-pulse"></div>)}
                         </div>
                     </div>
                      <div>
@@ -220,6 +246,16 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
                            </button>
                         </div>
                      </div>
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Observações (para o motorista)</label>
+                        <textarea 
+                            value={observations} 
+                            onChange={(e) => setObservations(e.target.value)} 
+                            rows="2"
+                            placeholder="Ex: Deixar na portaria, procurar por João" 
+                            className="w-full px-4 py-2 bg-gray-50 border rounded-lg"
+                        />
+                    </div>
                      <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Tags de Manuseio</label>
                         <div className="flex flex-wrap gap-2">{availableTags.map(t => (<button key={t.name} type="button" onClick={() => handleTagToggle(t.name)} className={`px-3 py-1 text-sm font-semibold rounded-full transition-all ${tags.includes(t.name) ? `${t.color} ring-2 ring-offset-1 ring-sky-500` : 'bg-gray-100 hover:bg-gray-200'}`}>{t.name}</button>))}</div>
@@ -248,7 +284,6 @@ const OrderModal = ({ onClose, user, orderToEdit, selectedDate, isLoaded }) => {
                         <button type="button" onClick={onClose} className="px-6 py-2 font-semibold text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancelar</button>
                         <button type="submit" disabled={loading} className="px-6 py-2 font-semibold text-white bg-sky-600 rounded-lg flex items-center gap-2">
                             {loading ? 'Salvando...' : (orderToEdit ? 'Salvar Alterações' : 'Adicionar Pedido')}
-                            {!loading && <Plus className="w-5 h-5"/>}
                         </button>
                     </div>
                 </form>

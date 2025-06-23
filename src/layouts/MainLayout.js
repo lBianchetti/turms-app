@@ -1,24 +1,30 @@
 import React from 'react';
 import { signOut } from 'firebase/auth';
-// 1. Importar o ícone 'Users' para o portal
-import { LayoutDashboard, Map, Settings, LogOut, Truck, BarChart2, Users } from 'lucide-react';
+import { LayoutDashboard, Map, Settings, LogOut, Truck, BarChart2, Users, DollarSign, Briefcase, MessageSquareHeart, MapPin } from 'lucide-react';
 import { auth } from '../config/firebase';
 
-const NavLink = ({ icon, text, isActive, onClick }) => (
+const NavLink = ({ icon, text, isActive, onClick, count, countColor = 'bg-red-500' }) => (
     <button
         onClick={onClick}
-        className={`flex items-center w-full px-4 py-3 text-left transition-colors duration-200 ${
+        className={`flex items-center justify-between w-full px-4 py-3 text-left transition-colors duration-200 ${
             isActive 
                 ? 'bg-sky-600 text-white' 
-                : 'text-gray-300 hover:bg-sky-800 hover:text-white'
+                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
         }`}
     >
-        {icon}
-        <span className="ml-4 font-medium">{text}</span>
+        <div className="flex items-center">
+            {icon}
+            <span className="ml-4 font-medium">{text}</span>
+        </div>
+        {count > 0 && (
+            <span className={`${countColor} text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center`}>
+                {count}
+            </span>
+        )}
     </button>
 );
 
-const MainLayout = ({ children, user, currentPage, navigateTo }) => {
+const MainLayout = ({ children, user, currentPage, navigateTo, pendingPaymentsCount, incompleteClientsCount }) => {
     
     const handleLogout = () => {
         signOut(auth).catch(error => console.error("Erro ao fazer logout:", error));
@@ -32,37 +38,34 @@ const MainLayout = ({ children, user, currentPage, navigateTo }) => {
                     <h1 className="text-2xl font-bold text-white">Turms</h1>
                 </div>
                 <nav className="flex-grow mt-5">
+                    <NavLink icon={<LayoutDashboard size={20} />} text="Painel de Controle" isActive={currentPage === 'dashboard'} onClick={() => navigateTo('dashboard')} />
+                    <NavLink icon={<Map size={20} />} text="Planejamento" isActive={currentPage === 'planning'} onClick={() => navigateTo('planning')} />
                     <NavLink 
-                        icon={<LayoutDashboard size={20} />} 
-                        text="Painel de Controle" 
-                        isActive={currentPage === 'dashboard'}
-                        onClick={() => navigateTo('dashboard')}
+                        icon={<Briefcase size={20} />} 
+                        text="Clientes" 
+                        isActive={currentPage === 'clients' || currentPage === 'clientProfile'} 
+                        onClick={() => navigateTo('clients')} 
+                        count={incompleteClientsCount}
+                        countColor="bg-blue-500"
                     />
-                    <NavLink 
-                        icon={<Map size={20} />} 
-                        text="Planejamento" 
-                        isActive={currentPage === 'planning'}
-                        onClick={() => navigateTo('planning')}
-                    />
-                    <NavLink 
-                        icon={<BarChart2 size={20} />} 
-                        text="Relatórios" 
-                        isActive={currentPage === 'reports'}
-                        onClick={() => navigateTo('reports')}
-                    />
-                     {/* 2. Botão para o Portal do Motorista restaurado e no menu principal */}
-                    <NavLink 
-                        icon={<Users size={20} />} 
-                        text="Portal Motorista" 
-                        isActive={currentPage === 'driverSelection'}
-                        onClick={() => navigateTo('driverSelection')}
-                    />
-                    <NavLink 
-                        icon={<Settings size={20} />} 
-                        text="Administração" 
-                        isActive={currentPage === 'admin'}
-                        onClick={() => navigateTo('admin')}
-                    />
+                    <NavLink icon={<DollarSign size={20} />} text="Pagamentos" isActive={currentPage === 'pendingPayments'} onClick={() => navigateTo('pendingPayments')} count={pendingPaymentsCount} />
+                    <NavLink icon={<MessageSquareHeart size={20} />} text="Reativação" isActive={currentPage === 'reactivation'} onClick={() => navigateTo('reactivation')} />
+                    
+                    <div className="mt-4 pt-4 border-t border-gray-700">
+                        <h3 className="px-4 text-xs font-semibold uppercase text-gray-400">Análises</h3>
+                        <NavLink icon={<BarChart2 size={20} />} text="Relatórios Gerais" isActive={currentPage === 'reports'} onClick={() => navigateTo('reports')} />
+                        <NavLink icon={<MapPin size={20} />} text="Frequência Endereços" isActive={currentPage === 'addressAnalysis'} onClick={() => navigateTo('addressAnalysis')} />
+                    </div>
+
+                    <div className="mt-auto">
+                        <NavLink icon={<Users size={20} />} text="Portal Motorista" isActive={currentPage === 'routeSelection'} onClick={() => navigateTo('routeSelection')} />
+                        <NavLink 
+                            icon={<Settings size={20} />} 
+                            text="Administração" 
+                            isActive={currentPage === 'admin'} 
+                            onClick={() => navigateTo('admin')} 
+                        />
+                    </div>
                 </nav>
                 <div className="p-4 border-t border-gray-700">
                     <div className="mb-4">
